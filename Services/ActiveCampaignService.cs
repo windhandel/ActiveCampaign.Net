@@ -1,120 +1,102 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Net;
+﻿using System.Reflection;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Web;
 using ActiveCampaign.Net.Models;
+using Newtonsoft.Json;
 
 namespace ActiveCampaign.Net.Services
 {
     public abstract class ActiveCampaignService
     {
-        public string ApiUrl { get; set; }
-        public string ApiKey { get; set; }
-        public string ApiPassword { get; set; }
+        public const string HttpClientName = "ActiveCampaignHttpClient";
+        private readonly IHttpClientFactory _httpClientFactory;
+        private readonly HttpClient _httpClient;
+        private static readonly Dictionary<Type, PropertyInfo[]> PropertyCache = new();
+        private static readonly ReaderWriterLockSlim CacheLock = new();
 
-        protected ActiveCampaignService(string apiKey, string apiUrl, string apiPassword = null)
+        protected ActiveCampaignService(IHttpClientFactory httpClientFactory)
         {
-            if (string.IsNullOrEmpty(apiUrl))
-                throw new ArgumentException(Resources.ActiveCampaign.Invalid_API_Url, nameof(apiUrl));
-
-            if (string.IsNullOrEmpty(apiKey))
-                throw new ArgumentException(Resources.ActiveCampaign.Invalid_API_key, nameof(apiKey));
-
-            ApiKey = apiKey;
-            ApiUrl = CreateBaseUrl(apiUrl) + "&api_key=" + apiKey;
-            ApiPassword = apiPassword;
+            _httpClientFactory = httpClientFactory;
+            _httpClient = _httpClientFactory.CreateClient(HttpClientName);
         }
 
-        private string CreateBaseUrl(string apiUrl)
+        protected async Task<TModel?> Get<TModel>(string action, object? model = null)
         {
-            string cleanedUrl = Regex.IsMatch(apiUrl, "/$") ? apiUrl.Substring(0, apiUrl.Length - 1) : apiUrl;
-
-            if (Regex.IsMatch(apiUrl, "https://www.activecampaign.com"))
-                return cleanedUrl + "/api.php?api_output=json";
-
-            return cleanedUrl + "/admin/api.php?api_output=json";
+            var getParameters = model != null ? ConvertToDictionary(model) : null;
+            var url = BuildUrl(action, getParameters);
+            var response = await _httpClient.GetAsync(url);
+            var jsonResponse = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<TModel>(jsonResponse);
         }
 
-        /// <summary>
-        /// Send Request method. 
-        /// </summary>
-        /// <param name="method">Active Campaign method name</param>
-        /// <param name="getParameters">Optional. Dictionary with GET parameters</param>
-        /// <param name="postParameters">Optional. Dictionary with POST parameters</param>
-        /// <returns>JSON response as string from Active Campaign API</returns>
-        public string SendRequest(string method, Dictionary<string, string> getParameters = null, Dictionary<string, string> postParameters = null)
+        protected async Task<TModel?> Send<TModel>(string action, object model)
         {
-            if (string.IsNullOrEmpty(method))
-                throw new ArgumentException("A valid ActiveCampaign API method was not specified", nameof(method));
-
-            var urlBuilder = new StringBuilder();
-            urlBuilder.Append(ApiUrl);
-            urlBuilder.Append("&api_action=").Append(method);
-
-
-            if (getParameters != null)
-            {
-                foreach (var parameter in getParameters)
-                {
-                    urlBuilder.AppendFormat("&{0}={1}", HttpUtility.UrlEncode(parameter.Key), HttpUtility.UrlEncode(parameter.Value));
-                }
-            }
-
-            var request = (HttpWebRequest)WebRequest.Create(urlBuilder.ToString());
-
-            if (postParameters != null)
-            {
-                var requestData = new StringBuilder();
-
-                foreach (var postParameter in postParameters)
-                {
-                    requestData.AppendFormat("&{0}={1}", HttpUtility.UrlEncode(postParameter.Key), HttpUtility.UrlEncode(postParameter.Value));
-                }
-
-                var postString = requestData.ToString().Substring(1);
-
-                request.Method = "POST";
-                request.ContentType = "application/x-www-form-urlencoded";
-                request.ContentLength = postString.Length;
-
-                using (var stream = request.GetRequestStream())
-                {
-                    stream.Write(Encoding.UTF8.GetBytes(postString), 0, postString.Length);
-                }
-            }
-
-            string jsonResponse;
-
-            using (var response = (HttpWebResponse)request.GetResponse())
-            {
-                var responseStream = response.GetResponseStream();
-
-                // Pipes the stream to a higher level stream reader with the required encoding format. 
-                using (var readStream = new StreamReader(responseStream, Encoding.UTF8))
-                {
-                    jsonResponse = readStream.ReadToEnd();
-                }
-            }
-
-            return jsonResponse;
+            var postData = ConvertToDictionary(model);
+            var content = new FormUrlEncodedContent(postData);
+            var response = await _httpClient.PostAsync(action, content);
+            var jsonResponse = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<TModel>(jsonResponse);
         }
 
-        /// <summary>
-        /// Check if response is successfull
-        /// </summary>
-        /// <param name="response">Result type</param>
-        /// <returns>bool</returns>
-        public bool IsRequestSuccessfull(Result response)
+        protected bool IsRequestSuccessfull(Result response)
         {
-            if (response.ResultCode == 1)
-            {
-                return true;
-            }
+            return response.ResultCode == 1;
+        }
 
-            return false;
+        private string BuildUrl(string action, Dictionary<string, string>? parameters)
+        {
+            var url = action;
+            if (parameters != null && parameters.Count > 0)
+            {
+                var queryString = string.Join("&", parameters.Select(p => $"{p.Key}={HttpUtility.UrlEncode(p.Value)}"));
+                url = $"{action}?{queryString}";
+            }
+            return url;
+        }
+
+        private Dictionary<string, string> ConvertToDictionary(object model)
+        {
+            var dictionary = new Dictionary<string, string>();
+            var properties = GetProperties(model.GetType());
+
+            foreach (var property in properties)
+            {
+                var value = property.GetValue(model);
+                if (value != null)
+                {
+                    dictionary.Add(property.Name.ToLower(), value.ToString());
+                }
+            }
+            return dictionary;
+        }
+
+        private PropertyInfo[] GetProperties(Type type)
+        {
+            CacheLock.EnterUpgradeableReadLock();
+            try
+            {
+                if (!PropertyCache.TryGetValue(type, out var properties))
+                {
+                    CacheLock.EnterWriteLock();
+                    try
+                    {
+                        if (!PropertyCache.TryGetValue(type, out properties))
+                        {
+                            properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+                            PropertyCache[type] = properties;
+                        }
+                    }
+                    finally
+                    {
+                        CacheLock.ExitWriteLock();
+                    }
+                }
+                return properties;
+            }
+            finally
+            {
+                CacheLock.ExitUpgradeableReadLock();
+            }
         }
     }
 }

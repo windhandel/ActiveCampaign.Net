@@ -11,16 +11,19 @@ namespace ActiveCampaign.Net.Models
         [JsonProperty("result_code")]
         public int ResultCode { get; set; }
 
+        [JsonIgnore]
+        public bool IsSuccessful => ResultCode == 1;
+
         /// <summary>
         /// A custom message that appears explaining what happened. Example: Account added
         /// </summary>
         [JsonProperty("result_message")]
-        public string ResultMessage { get; set; }
+        public string? ResultMessage { get; set; }
 
         /// <summary>
         /// The result output used.Example: serialize
         /// </summary>
         [JsonProperty("result_output")]
-        public string ResultOutput { get; set; }
+        public string? ResultOutput { get; set; }
     }
 }

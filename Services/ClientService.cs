@@ -1,31 +1,20 @@
-﻿using System;
-using ActiveCampaign.Net.Models.User;
-using Newtonsoft.Json;
-
-namespace ActiveCampaign.Net.Services
+﻿namespace ActiveCampaign.Net.Services
 {
+    using ActiveCampaign.Net.Models.User;
+
     public class ClientService : ActiveCampaignService
     {
-        public ClientService(string apiKey = null, string apiUrl = null, string apiPassword = null) : base(apiKey, apiUrl, apiPassword) { }
+        public ClientService(IHttpClientFactory httpClientFactory) : base(httpClientFactory) { }
 
         /// <summary>
         /// Retrieve info about client
         /// </summary>
         /// <returns></returns>
-        public UserInfoResponse ClientMe()
+        public async Task<UserInfoResponse?> ClientMe()
         {
-            try
-            {
-                var jsonResponse = SendRequest("client_me", null, null);
+            var userInfoResponse = await Get<UserInfoResponse>("client_me");
 
-                var response = JsonConvert.DeserializeObject<UserInfoResponse>(jsonResponse);
-
-                return response;
-            }
-            catch (Exception ex)
-            {
-                throw new ExceptionService(ex.Message);
-            }
+            return userInfoResponse;
         }
     }
 }

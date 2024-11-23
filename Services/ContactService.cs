@@ -1,110 +1,110 @@
-﻿namespace ActiveCampaign.Net.Services
+namespace ActiveCampaign.Net.Services
 {
-    using System;
     using System.Collections.Generic;
-    using System.Linq;
+    using System.Threading.Tasks;
+    using ActiveCampaign.Net.Models;
     using ActiveCampaign.Net.Models.Contact;
-    using Newtonsoft.Json;
 
-    /// <summary>
-    /// Defines the <see cref="ContactService" />
-    /// </summary>
     public class ContactService : ActiveCampaignService
     {
-        #region Constructors
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="ContactService"/> class.
-        /// </summary>
-        /// <param name="apiKey">The API key <see cref="string"/></param>
-        /// <param name="apiUrl">The API URL<see cref="string"/></param>
-        /// <param name="apiPassword">The API Password<see cref="string"/></param>
-        public ContactService(string apiKey = null, string apiUrl = null, string apiPassword = null) : base(apiKey, apiUrl, apiPassword)
+        public ContactService(IHttpClientFactory httpClientFactory) : base(httpClientFactory)
         {
         }
 
-        #endregion
-
-        #region Methods
-
-        /// <summary>
-        /// View only one contact's details by searching for their email address.
-        /// </summary>
-        /// <param name="email">The email<see cref="string"/></param>
-        /// <returns><see cref="BasicContactInfo"/></returns>
-        public BasicContactInfo GetContactInfo(string email)
+        public async Task<List<Contact>?> GetAllContactsAsync()
         {
-            var getData = new Dictionary<string, string> { { "email", email } };
-            var jsonResponse = SendRequest("contact_view_email", getData, null);
-
-            return JsonConvert.DeserializeObject<BasicContactInfo>(jsonResponse);
+            var jsonResponse = await Get<List<Contact>>("contact_list");
+            return jsonResponse;
         }
 
-        /// <summary>
-        /// Add or edit a contact based on their email address. Instead of calling contact_view to check if the contact exists, 
-        /// and then calling contact_add or contact_edit, you can make just one call and include only the information you want added or updated.
-        /// </summary>
-        /// <param name="basicContactInfo"></param>
-        /// <param name="contactLists"></param>
-        /// <returns><see cref="ContactSyncResponse"/></returns>
-        public ContactSyncResponse SyncContact(BasicContactInfo basicContactInfo, IEnumerable<BasicContactList> contactLists)
+        public async Task<Contact?> GetContactByIdAsync(int contactId)
         {
-            var postData = new Dictionary<string, string>
-            {
-                { "email", basicContactInfo.Email },
-                { "first_name", basicContactInfo.FirstName ?? string.Empty },
-                { "last_name", basicContactInfo.LastName ?? string.Empty },
-                { "phone", basicContactInfo.Phone ?? string.Empty },
-                { "orgname", basicContactInfo.OrganizationName ?? string.Empty },
-                { "form", basicContactInfo.FormId.ToString() ?? string.Empty },
-            };
-
-            if (basicContactInfo.Tags != null && basicContactInfo.Tags.Any())
-            {
-                postData.Add("tags", string.Join(",", basicContactInfo.Tags));
-            }
-
-            foreach (var contactList in contactLists)
-            {
-                postData.Add(
-                    string.Format("p[{0}]", contactList.Id), contactList.Id.ToString());
-
-                postData.Add(
-                    string.Format("status[{0}]", contactList.Id),
-                    contactList.Status.ToString("D"));
-
-                postData.Add(
-                    string.Format("noresponders[{0}]", contactList.Id),
-                    Convert.ToInt32(contactList.Noresponders).ToString());
-
-                postData.Add(
-                    string.Format("sdate[{0}]", contactList.Id),
-                    contactList.SubscribeDate);
-
-                postData.Add(
-                    string.Format("instantresponders[{0}]", contactList.Id),
-                    Convert.ToInt32(contactList.InstantResponders).ToString());
-
-                postData.Add(
-                    string.Format("lastmessage[{0}]", contactList.Id),
-                    Convert.ToInt32(contactList.LastMessage).ToString());
-            }
-
-            if (basicContactInfo.Fields != null && basicContactInfo.Fields.Any())
-            {
-                foreach (var field in basicContactInfo.Fields)
-                {
-                    postData.Add(
-                        string.Format("field[{0},0]", field.Id != null ? field.Id.ToString() : field.Name),
-                        field.Value);
-                }
-            }
-
-            var jsonResponse = SendRequest("contact_sync", null, postData);
-
-            return JsonConvert.DeserializeObject<ContactSyncResponse>(jsonResponse);
+            var jsonResponse = await Get<Contact>("contact_view", new { id = contactId });
+            return jsonResponse;
         }
 
-        #endregion
+        public async Task<Contact?> GetContactByEmailAsync(string email)
+        {
+            var jsonResponse = await Get<Contact>("contact_view_email", new { email });
+            return jsonResponse;
+        }
+
+        public async Task<Contact?> GetContactByHashAsync(string hash)
+        {
+            var jsonResponse = await Get<Contact>("contact_view_hash", new { hash });
+            return jsonResponse;
+        }
+
+        public async Task<Contact?> CreateContactAsync(Contact contact)
+        {
+            var jsonResponse = await Send<Contact>("contact_add", contact);
+            return jsonResponse;
+        }
+
+        public async Task<Contact?> UpdateContactAsync(Contact contact)
+        {
+            var jsonResponse = await Send<Contact>("contact_edit", contact);
+            return jsonResponse;
+        }
+
+        public async Task<bool> DeleteContactAsync(int contactId)
+        {
+            var jsonResponse = await Send<Result>("contact_delete", new { id = contactId });
+            return jsonResponse?.ResultCode == 1;
+        }
+
+        public async Task<bool> DeleteContactsAsync(List<int> contactIds)
+        {
+            var jsonResponse = await Send<Result>("contact_delete_list", new { ids = string.Join(",", contactIds) });
+            return jsonResponse?.ResultCode == 1;
+        }
+
+        public async Task<bool> AddContactNoteAsync(int contactId, string note)
+        {
+            var jsonResponse = await Send<Result>("contact_note_add", new { id = contactId, note });
+            return jsonResponse?.ResultCode == 1;
+        }
+
+        public async Task<bool> EditContactNoteAsync(int noteId, string note)
+        {
+            var jsonResponse = await Send<Result>("contact_note_edit", new { id = noteId, note });
+            return jsonResponse?.ResultCode == 1;
+        }
+
+        public async Task<bool> DeleteContactNoteAsync(int noteId)
+        {
+            var jsonResponse = await Send<Result>("contact_note_delete", new { id = noteId });
+            return jsonResponse?.ResultCode == 1;
+        }
+
+        public async Task<bool> AddContactTagAsync(int contactId, int tagId)
+        {
+            var jsonResponse = await Send<Result>("contact_tag_add", new { contact = contactId, tag = tagId });
+            return jsonResponse?.ResultCode == 1;
+        }
+
+        public async Task<bool> RemoveContactTagAsync(int contactId, int tagId)
+        {
+            var jsonResponse = await Send<Result>("contact_tag_remove", new { contact = contactId, tag = tagId });
+            return jsonResponse?.ResultCode == 1;
+        }
+
+        public async Task<List<ContactAutomation>?> GetContactAutomationsAsync(int contactId)
+        {
+            var jsonResponse = await Get<List<ContactAutomation>>("contact_automation_list", new { id = contactId });
+            return jsonResponse;
+        }
+
+        public async Task<Paginator?> GetContactPaginatorAsync(int page, int limit)
+        {
+            var jsonResponse = await Get<Paginator>("contact_paginator", new { page, limit });
+            return jsonResponse;
+        }
+
+        public async Task<Contact?> SyncContactAsync(Contact contact)
+        {
+            var jsonResponse = await Send<Contact>("contact_sync", contact);
+            return jsonResponse;
+        }
     }
 }
